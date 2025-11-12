@@ -756,7 +756,7 @@ def render_parts_input(default_colors) -> List[Part]:
 
 
 # ========= Hoofd UI =========
-st.title("🔪 Plaatoptimalisatie Tool – zonder DXF (handmatige invoer)")
+st.title("🔪 Plaatoptimalisatie Tool")
 
 default_colors = [
     "#A3CEF1", "#90D26D", "#F29E4C", "#E59560", "#B56576",
@@ -956,4 +956,5 @@ with tab_result:
                             os.remove(page["png_path"])
                         except Exception:
                             pass
+
 

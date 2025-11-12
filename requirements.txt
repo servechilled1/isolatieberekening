@@ -1,1 +1,7 @@
-streamlit
+streamlit>=1.33,<2
+pandas>=2.2
+numpy>=1.26
+matplotlib>=3.8
+Pillow>=10.0
+fpdf2>=2.7
+ezdxf>=1.3

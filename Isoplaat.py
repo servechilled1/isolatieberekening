@@ -20,17 +20,6 @@ import streamlit as st
 # ========= Streamlit config – MOET eerste Streamlit-call zijn =========
 st.set_page_config(layout="wide", page_title="Plaatoptimalisatie Tool")
 
-"""
-Plaatoptimalisatie Tool
------------------------
-• Max-rectangles + Shelf (rij) algoritme; beide worden geprobeerd, beste resultaat wordt gekozen.  
-• Elk onderdeel mag 90° draaien; per plaatsing kiest de code de beste oriëntatie.  
-• Multi-run + meerdere heuristieken (area/short/long/combined) voor Max-Rects (of 'all' om alles te proberen).  
-• Instelbare kerf (zaagspleet) – toegepast aan de rechter- en onderzijde, zodat buitenranden strak blijven.  
-• Onderdelen hebben **dikte** en **type isolatie**; nesting gebeurt per combinatie daarvan.  
-• Overzicht per materiaal + dikte in UI én PDF, plus per-plaat visualisatie en CSV-export.  
-"""
-
 # ========= Data modellen =========
 @dataclass
 class Part:
@@ -967,3 +956,4 @@ with tab_result:
                             os.remove(page["png_path"])
                         except Exception:
                             pass
+

@@ -17,13 +17,6 @@ import pandas as pd
 from fpdf import FPDF
 import streamlit as st
 
-# ---- DXF lib (optioneel) ----
-try:
-    import ezdxf  # pip install ezdxf
-    EZDXF_AVAILABLE = True
-except Exception:
-    EZDXF_AVAILABLE = False
-
 # ========= Streamlit config – MOET eerste Streamlit-call zijn =========
 st.set_page_config(layout="wide", page_title="Plaatoptimalisatie Tool")
 
@@ -34,7 +27,6 @@ Plaatoptimalisatie Tool
 • Elk onderdeel mag 90° draaien; per plaatsing kiest de code de beste oriëntatie.  
 • Multi-run + meerdere heuristieken (area/short/long/combined) voor Max-Rects (of 'all' om alles te proberen).  
 • Instelbare kerf (zaagspleet) – toegepast aan de rechter- en onderzijde, zodat buitenranden strak blijven.  
-• DXF import (gesloten (LW)POLYLINE / 2D POLYLINE → bounding box → gegroepeerd).  
 • Onderdelen hebben **dikte** en **type isolatie**; nesting gebeurt per combinatie daarvan.  
 • Overzicht per materiaal + dikte in UI én PDF, plus per-plaat visualisatie en CSV-export.  
 """
@@ -532,26 +524,16 @@ def build_pdf_from_pages(plate_pages: List[Dict], parts: List[Part]) -> bytes:
         pdf.ln(3)
         pdf.cell(usable_w, 6, pdf_safe(f"Materiaal: {mat or '-'}"), ln=1)
         pdf.set_font("Helvetica", "", 9)
-        pdf.cell(
-            usable_w,
-            5,
-            pdf_safe(f"Totaal verbruikte platen: {total_pl}"),
-            ln=1,
-        )
-        pdf.cell(
-            usable_w,
-            5,
-            pdf_safe(f"Dikte: {th} mm"),
-            ln=1,
-        )
+        pdf.cell(usable_w, 5, pdf_safe(f"Totaal verbruikte platen: {total_pl}"), ln=1)
+        pdf.cell(usable_w, 5, pdf_safe(f"Dikte: {th} mm"), ln=1)
         pdf.ln(2)
 
         pdf.set_font("Helvetica", "B", 9)
         pdf.set_x(margin)
-        pdf.cell(col_label_w, 6, pdf_safe("Label"),          border=1)
-        pdf.cell(col_w_w,     6, pdf_safe("Breedte (mm)"),   border=1)
-        pdf.cell(col_h_w,     6, pdf_safe("Hoogte (mm)"),    border=1)
-        pdf.cell(col_qty_w,   6, pdf_safe("Aantal"),         border=1)
+        pdf.cell(col_label_w, 6, pdf_safe("Label"),            border=1)
+        pdf.cell(col_w_w,     6, pdf_safe("Breedte (mm)"),     border=1)
+        pdf.cell(col_h_w,     6, pdf_safe("Hoogte (mm)"),      border=1)
+        pdf.cell(col_qty_w,   6, pdf_safe("Aantal"),           border=1)
         pdf.cell(col_area_w,  6, pdf_safe("Totaal opp. (m2)"), border=1, ln=1)
 
         pdf.set_font("Helvetica", "", 9)
@@ -672,85 +654,6 @@ def build_csv_from_plates(grouped, W: int, H: int) -> bytes:
     return df.to_csv(index=False).encode("utf-8")
 
 
-# ========= DXF import =========
-def _bbox_from_vertices(verts):
-    xs = [v[0] for v in verts]
-    ys = [v[1] for v in verts]
-    minx, maxx = min(xs), max(xs)
-    miny, maxy = min(ys), max(ys)
-    return maxx - minx, maxy - miny
-
-
-def _rounded_int_mm(val: float) -> int:
-    return int(round(val))
-
-
-def parse_dxf_files_to_parts(
-    uploaded_files, scale_to_mm: float = 1.0, min_area_mm2: float = 1.0
-) -> List[Tuple[int, int, int]]:
-    size_counter: Dict[Tuple[int, int], int] = defaultdict(int)
-
-    for f in uploaded_files:
-        try:
-            data = f.read()
-            f.seek(0)
-            doc = ezdxf.read(io.BytesIO(data))
-            msp = doc.modelspace()
-        except Exception as e:
-            st.warning(
-                f"Kon DXF '{getattr(f, 'name', 'unknown')}' niet lezen: {e}"
-            )
-            continue
-
-        for e in msp:
-            try:
-                dxf_type = e.dxftype()
-                if dxf_type == "LWPOLYLINE":
-                    closed = bool(getattr(e, "closed", False))
-                    if not closed:
-                        continue
-                    verts = [(p[0], p[1]) for p in e.get_points()]
-                elif dxf_type == "POLYLINE":
-                    closed = bool(
-                        getattr(e, "is_closed", False)
-                        or getattr(e, "closed", False)
-                    )
-                    if not closed:
-                        continue
-                    verts = [
-                        (v.dxf.location.x, v.dxf.location.y)
-                        for v in e.vertices  # type: ignore
-                    ]
-                else:
-                    continue
-
-                if len(verts) < 3:
-                    continue
-
-                w_u, h_u = _bbox_from_vertices(verts)
-                w_mm = w_u * scale_to_mm
-                h_mm = h_u * scale_to_mm
-                area = w_mm * h_mm
-                if area < min_area_mm2:
-                    continue
-
-                w_i = _rounded_int_mm(w_mm)
-                h_i = _rounded_int_mm(h_mm)
-                key = tuple(sorted((w_i, h_i)))
-                size_counter[key] += 1
-            except Exception:
-                continue
-
-    parts_list: List[Tuple[int, int, int]] = []
-    for (a, b), qty in sorted(
-        size_counter.items(),
-        key=lambda x: (x[0][0] * x[0][1], x[0][0], x[0][1]),
-        reverse=True,
-    ):
-        parts_list.append((a, b, qty))
-    return parts_list
-
-
 # ========= UI helpers =========
 def render_sidebar():
     with st.sidebar:
@@ -807,222 +710,69 @@ def render_sidebar():
                 key="sb_heuristic",
             )
 
-        st.markdown("---")
-        st.caption("DXF status:")
-        if EZDXF_AVAILABLE:
-            st.success("`ezdxf` gevonden ✓ — DXF import klaar voor gebruik.")
-        else:
-            st.error("`ezdxf` ontbreekt. Installeer met: `pip install ezdxf`.")
-
     return W, H, grid, kerf, int(runs), heuristic_choice
 
 
 def render_parts_input(default_colors) -> List[Part]:
     st.subheader("🧩 Onderdelen invoer")
-
-    src = st.radio("Kies invoerbron", ["DXF import", "Handmatig"], horizontal=True)
-
     parts: List[Part] = []
 
-    if src == "DXF import":
-        st.markdown(
-            "Sleep hier je **DXF-bestanden** in. Gesloten polylines in *model space* "
-            "worden als onderdelen ingelezen (bounding box, gegroepeerd per afmeting)."
-        )
-        uploaded = st.file_uploader(
-            "DXF-bestanden", type=["dxf"], accept_multiple_files=True
-        )
+    n = st.number_input(
+        "Aantal verschillende onderdelen", 1, 50, 2, 1, key="n_parts"
+    )
+    st.markdown("Geef per onderdeel de afmetingen, dikte, type, aantallen en kleur op.")
 
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            scale_to_mm = st.number_input(
-                "Schaalfactor → mm",
-                min_value=0.000001,
-                max_value=1_000_000.0,
-                value=1.0,
-                step=0.1,
-                help="Voor tekeningen in meters kies 1000; in inches 25.4; etc.",
-                key="dx_scale",
-            )
-        with c2:
-            min_area_mm2 = st.number_input(
-                "Min. oppervlak (mm²) filter",
-                min_value=0.0,
-                value=1.0,
-                step=1.0,
-                help="Filtert ruis/heel kleine contouren weg.",
-                key="dx_min_area",
-            )
-        with c3:
-            dxf_thickness = st.number_input(
-                "Dikte (mm) voor deze DXF's",
-                min_value=0.0,
-                value=0.0,
-                step=1.0,
-                help="0 = geen specifieke dikte",
-                key="dx_thickness",
-            )
-        with c4:
-            dxf_material = st.text_input(
-                "Type isolatie voor deze DXF's", value="", key="dx_material"
-            )
+    for i in range(n):
+        st.markdown(f"#### Onderdeel {i + 1}")
+        cc = st.columns(7)
+        label = cc[0].text_input("Naam", f"Onderdeel {i+1}", key=f"l{i}")
+        w = cc[1].number_input("Breedte (mm)", 1, 20000, 500, 10, key=f"w{i}")
+        h = cc[2].number_input("Hoogte (mm)", 1, 20000, 300, 10, key=f"h{i}")
+        thickness = cc[3].number_input("Dikte (mm)", 0.0, 1000.0, 0.0, 1.0, key=f"t{i}")
+        material = cc[4].text_input("Type isolatie", "", key=f"m{i}")
+        qty = cc[5].number_input("Aantal", 1, 9999, 5, 1, key=f"q{i}")
+        color = cc[6].color_picker("Kleur", default_colors[i % len(default_colors)], key=f"c{i}")
+        parts.append(Part(label, int(w), int(h), int(qty), color, float(thickness), material))
 
-        label_prefix = st.text_input("Label prefix", value="DXF", key="dx_prefix")
-
-        if uploaded:
-            if not EZDXF_AVAILABLE:
-                st.error(
-                    "Kan DXF niet lezen: `ezdxf` ontbreekt. Installeer: `pip install ezdxf`."
-                )
-            else:
-                parsed = parse_dxf_files_to_parts(
-                    uploaded,
-                    scale_to_mm=scale_to_mm,
-                    min_area_mm2=min_area_mm2,
-                )
-                if not parsed:
-                    st.warning(
-                        "Geen gesloten polylines gevonden (of alles uitgefilterd)."
-                    )
-                else:
-                    rows_for_df = []
-                    for i, (w, h, qty) in enumerate(parsed, start=1):
-                        color = default_colors[(i - 1) % len(default_colors)]
-                        label = f"{label_prefix} {i}"
-                        parts.append(
-                            Part(
-                                label=label,
-                                w=int(w),
-                                h=int(h),
-                                qty=int(qty),
-                                color=color,
-                                thickness=float(dxf_thickness),
-                                material=dxf_material,
-                            )
-                        )
-                        rows_for_df.append(
-                            [
-                                label,
-                                int(w),
-                                int(h),
-                                int(qty),
-                                dxf_thickness,
-                                dxf_material,
-                                color,
-                            ]
-                        )
-
-                    st.markdown(
-                        "**Geïmporteerde onderdelen (gegroepeerd op afmeting):**"
-                    )
-                    st.dataframe(
-                        pd.DataFrame(
-                            rows_for_df,
-                            columns=[
-                                "Label",
-                                "Breedte (mm)",
-                                "Hoogte (mm)",
-                                "Aantal",
-                                "Dikte (mm)",
-                                "Type isolatie",
-                                "Kleur",
-                            ],
-                        ),
-                        use_container_width=True,
-                    )
-
-    else:
-        n = st.number_input(
-            "Aantal verschillende onderdelen", 1, 50, 2, 1, key="n_parts"
-        )
-        st.markdown("Geef per onderdeel de afmetingen, dikte, type, aantallen en kleur op.")
-        for i in range(n):
-            st.markdown(f"#### Onderdeel {i + 1}")
-            cc = st.columns(7)
-            label = cc[0].text_input(
-                "Naam", f"Onderdeel {i+1}", key=f"l{i}"
-            )
-            w = cc[1].number_input(
-                "Breedte (mm)", 1, 20000, 500, 10, key=f"w{i}"
-            )
-            h = cc[2].number_input(
-                "Hoogte (mm)", 1, 20000, 300, 10, key=f"h{i}"
-            )
-            thickness = cc[3].number_input(
-                "Dikte (mm)", 0.0, 1000.0, 0.0, 1.0, key=f"t{i}"
-            )
-            material = cc[4].text_input(
-                "Type isolatie", "", key=f"m{i}"
-            )
-            qty = cc[5].number_input(
-                "Aantal", 1, 9999, 5, 1, key=f"q{i}"
-            )
-            color = cc[6].color_picker(
-                "Kleur", default_colors[i % len(default_colors)], key=f"c{i}"
-            )
-            parts.append(
-                Part(
-                    label,
-                    int(w),
-                    int(h),
-                    int(qty),
-                    color,
-                    float(thickness),
-                    material,
-                )
-            )
-
-        if parts:
-            overview_df = pd.DataFrame(
+    if parts:
+        overview_df = pd.DataFrame(
+            [
                 [
-                    [
-                        p.label,
-                        p.w,
-                        p.h,
-                        p.thickness,
-                        p.material,
-                        p.qty,
-                        p.color,
-                        (p.area() * p.qty) / 1_000_000.0,
-                    ]
-                    for p in parts
-                ],
-                columns=[
-                    "Label",
-                    "Breedte (mm)",
-                    "Hoogte (mm)",
-                    "Dikte (mm)",
-                    "Type isolatie",
-                    "Aantal",
-                    "Kleur",
-                    "Totaal oppervlak (m²)",
-                ],
-            )
-            st.markdown("**Overzicht ingevoerde onderdelen:**")
-            st.dataframe(overview_df, use_container_width=True)
+                    p.label,
+                    p.w,
+                    p.h,
+                    p.thickness,
+                    p.material,
+                    p.qty,
+                    p.color,
+                    (p.area() * p.qty) / 1_000_000.0,
+                ]
+                for p in parts
+            ],
+            columns=[
+                "Label",
+                "Breedte (mm)",
+                "Hoogte (mm)",
+                "Dikte (mm)",
+                "Type isolatie",
+                "Aantal",
+                "Kleur",
+                "Totaal oppervlak (m²)",
+            ],
+        )
+        st.markdown("**Overzicht ingevoerde onderdelen:**")
+        st.dataframe(overview_df, use_container_width=True)
 
     return parts
 
 
 # ========= Hoofd UI =========
-st.title("🔪 Plaatoptimalisatie Tool – met DXF import & statistieken")
+st.title("🔪 Plaatoptimalisatie Tool – zonder DXF (handmatige invoer)")
 
 default_colors = [
-    "#A3CEF1",
-    "#90D26D",
-    "#F29E4C",
-    "#E59560",
-    "#B56576",
-    "#6D597A",
-    "#355070",
-    "#43AA8B",
-    "#FFB5A7",
-    "#BDE0FE",
-    "#84A98C",
-    "#F6BD60",
-    "#6C757D",
-    "#B08968",
-    "#A2D2FF",
+    "#A3CEF1", "#90D26D", "#F29E4C", "#E59560", "#B56576",
+    "#6D597A", "#355070", "#43AA8B", "#FFB5A7", "#BDE0FE",
+    "#84A98C", "#F6BD60", "#6C757D", "#B08968", "#A2D2FF",
 ]
 
 W, H, grid, kerf, runs, heuristic_choice = render_sidebar()
@@ -1036,9 +786,7 @@ with tab_result:
     st.subheader("📐 Optimalisatie uitvoeren")
 
     if not parts:
-        st.info(
-            "Er zijn nog geen onderdelen ingevoerd. Ga naar het tabblad **Invoer** om te beginnen."
-        )
+        st.info("Er zijn nog geen onderdelen ingevoerd. Ga naar het tabblad **Invoer** om te beginnen.")
     else:
         oversized = find_oversized_parts(parts, W, H, kerf)
         if oversized:
@@ -1047,18 +795,8 @@ with tab_result:
                 "(ook niet met rotatie en huidige kerf):"
             )
             df_oversized = pd.DataFrame(
-                [
-                    [p.label, p.w, p.h, p.thickness, p.material, p.qty]
-                    for p in oversized
-                ],
-                columns=[
-                    "Label",
-                    "Breedte (mm)",
-                    "Hoogte (mm)",
-                    "Dikte (mm)",
-                    "Type isolatie",
-                    "Aantal",
-                ],
+                [[p.label, p.w, p.h, p.thickness, p.material, p.qty] for p in oversized],
+                columns=["Label", "Breedte (mm)", "Hoogte (mm)", "Dikte (mm)", "Type isolatie", "Aantal"],
             )
             st.dataframe(df_oversized, use_container_width=True)
 
@@ -1076,12 +814,8 @@ with tab_result:
 
                 for key, plist in parts_by_group.items():
                     res = pack_all(
-                        W,
-                        H,
-                        [pp.copy() for pp in plist],
-                        kerf,
-                        heuristic=heuristic_choice,
-                        runs=int(runs),
+                        W, H, [pp.copy() for pp in plist], kerf,
+                        heuristic=heuristic_choice, runs=int(runs),
                     )
                     if res:
                         plates_by_group[key] = res
@@ -1094,44 +828,26 @@ with tab_result:
                 st.markdown("### 📊 Globale statistieken")
                 col_s1, col_s2, col_s3, col_s4 = st.columns(4)
                 col_s1.metric("Totaal aantal platen", f"{stats['total_plates']}")
-                col_s2.metric(
-                    "Benutting plaatoppervlak",
-                    f"{stats['utilisation']:.1f} %",
-                )
-                col_s3.metric(
-                    "Afval (gemiddeld)",
-                    f"{stats['waste_pct']:.1f} %",
-                )
-                col_s4.metric(
-                    "Totaal onderdelen-oppervlak",
-                    f"{stats['parts_total_area_m2']:.2f} m²",
-                )
+                col_s2.metric("Benutting plaatoppervlak", f"{stats['utilisation']:.1f} %")
+                col_s3.metric("Afval (gemiddeld)", f"{stats['waste_pct']:.1f} %")
+                col_s4.metric("Totaal onderdelen-oppervlak", f"{stats['parts_total_area_m2']:.2f} m²")
 
                 grouped = OrderedDict()
                 for key, plates_group in plates_by_group.items():
                     for placed in plates_group:
                         used_area = sum(r["w"] * r["h"] for r in placed)
-                        rest_pct = (
-                            100 - (used_area / (W * H) * 100)
-                            if (W > 0 and H > 0)
-                            else 0.0
-                        )
+                        rest_pct = 100 - (used_area / (W * H) * 100) if (W > 0 and H > 0) else 0.0
                         sig = plate_signature(placed, group_key=key)
                         thickness, material = key
                         if sig in grouped:
                             grouped[sig]["count"] += 1
                         else:
                             grouped[sig] = dict(
-                                placed=placed,
-                                count=1,
-                                rest_pct=rest_pct,
-                                group_key=key,
-                                thickness=thickness,
-                                material=material,
+                                placed=placed, count=1, rest_pct=rest_pct,
+                                group_key=key, thickness=thickness, material=material,
                             )
 
                 st.markdown("### 🧱 Overzicht per materiaal en dikte")
-
                 total_plates_by_group: Dict[Tuple[float, str], int] = defaultdict(int)
                 for item in grouped.values():
                     key = item["group_key"]
@@ -1142,9 +858,7 @@ with tab_result:
                     key = (float(p.thickness), str(p.material))
                     ui_parts_by_group[key].append(p)
 
-                for key in sorted(
-                    ui_parts_by_group.keys(), key=lambda k: (str(k[1]), float(k[0]))
-                ):
+                for key in sorted(ui_parts_by_group.keys(), key=lambda k: (str(k[1]), float(k[0]))):
                     th, mat = key
                     group_parts = ui_parts_by_group[key]
                     total_pl = total_plates_by_group.get(key, 0)
@@ -1154,23 +868,8 @@ with tab_result:
                     st.markdown(f"- **Dikte:** {th} mm")
 
                     df_group = pd.DataFrame(
-                        [
-                            [
-                                p.label,
-                                p.w,
-                                p.h,
-                                p.qty,
-                                (p.area() * p.qty) / 1_000_000.0,
-                            ]
-                            for p in group_parts
-                        ],
-                        columns=[
-                            "Label",
-                            "Breedte (mm)",
-                            "Hoogte (mm)",
-                            "Aantal",
-                            "Totaal opp. (m²)",
-                        ],
+                        [[p.label, p.w, p.h, p.qty, (p.area() * p.qty) / 1_000_000.0] for p in group_parts],
+                        columns=["Label", "Breedte (mm)", "Hoogte (mm)", "Aantal", "Totaal opp. (m²)"],
                     )
                     st.dataframe(df_group, use_container_width=True)
                     st.markdown("---")
@@ -1178,8 +877,8 @@ with tab_result:
                 total_plates = sum(item["count"] for item in grouped.values())
                 st.info(f"**Totaal aantal platen (incl. herhalingen):** {total_plates}")
 
+                # Maak pagina's + beelden
                 plate_pages: List[Dict] = []
-
                 for idx, item in enumerate(grouped.values(), start=1):
                     placed = item["placed"]
                     count = item["count"]
@@ -1191,37 +890,20 @@ with tab_result:
                     for r in placed:
                         key_lbl = f"{r['label']} ({r['w']}x{r['h']})"
                         rows[key_lbl] = rows.get(key_lbl, 0) + 1
-                    summary_df = (
-                        pd.DataFrame(
-                            [[k, v] for k, v in rows.items()],
-                            columns=["Onderdeel (afm)", "Aantal per plaat"],
-                        )
-                        .sort_values("Onderdeel (afm)")
-                        .reset_index(drop=True)
-                    )
 
-                    buf, legend = draw_plate_png(
-                        placed, idx, W, H, grid, rest_pct, count=count
-                    )
-                    with tempfile.NamedTemporaryFile(
-                        delete=False, suffix=".png"
-                    ) as tmp:
+                    buf, legend = draw_plate_png(placed, idx, W, H, grid, rest_pct, count=count)
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
                         tmp.write(buf.getvalue())
                         png_path = tmp.name
 
                     plate_pages.append(
                         dict(
-                            plate_no=idx,
-                            count=count,
-                            rows=rows,
-                            rest_pct=rest_pct,
-                            legend=legend,
-                            png_path=png_path,
-                            thickness=thickness,
-                            material=material,
+                            plate_no=idx, count=count, rows=rows, rest_pct=rest_pct,
+                            legend=legend, png_path=png_path, thickness=thickness, material=material,
                         )
                     )
 
+                    # UI weergave
                     colA, colB = st.columns([3, 2])
                     with colA:
                         extra = []
@@ -1230,17 +912,16 @@ with tab_result:
                         if material:
                             extra.append(material)
                         extra_txt = f" ({', '.join(extra)})" if extra else ""
-                        st.image(
-                            buf,
-                            caption=f"Plaat-type {idx} x{count}{extra_txt}",
-                            use_container_width=True,
-                        )
+                        st.image(buf, caption=f"Plaat-type {idx} x{count}{extra_txt}", use_container_width=True)
                     with colB:
+                        summary_df = (
+                            pd.DataFrame([[k, v] for k, v in rows.items()],
+                                         columns=["Onderdeel (afm)", "Aantal per plaat"])
+                            .sort_values("Onderdeel (afm)").reset_index(drop=True)
+                        )
                         st.markdown("**Onderdelen overzicht (per plaat)**")
                         st.dataframe(summary_df, use_container_width=True)
-                        st.markdown(
-                            f"**Restmateriaal (per plaat):** {rest_pct:.1f}%"
-                        )
+                        st.markdown(f"**Restmateriaal (per plaat):** {rest_pct:.1f}%")
                         extra_lines = []
                         if thickness and thickness != 0.0:
                             extra_lines.append(f"Dikte: {thickness} mm")
@@ -1250,9 +931,7 @@ with tab_result:
                             st.markdown("**Materiaal**")
                             for line in extra_lines:
                                 st.markdown(f"- {line}")
-                        st.markdown(
-                            f"**Aantal uit te voeren platen van dit type:** {count}"
-                        )
+                        st.markdown(f"**Aantal uit te voeren platen van dit type:** {count}")
                         st.markdown("**Legenda**")
                         for lbl, clr in legend.items():
                             st.markdown(
